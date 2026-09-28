@@ -1,0 +1,14 @@
+node_modules/
+
+.env
+
+CONFIG_VE_RETENTION.md
+YAPILACAKLAR.md
+
+.claude
+
+healthcheck.cmd
+rollup-4h.cmd
+
+producer-live.pid
+producer-recovered.log

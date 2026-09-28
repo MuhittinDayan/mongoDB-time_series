@@ -1,0 +1,20 @@
+{
+  "name": "mongo-retention-test",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Şirket bazlı partial TTL kullanan MongoDB time-series retention deneyi",
+  "scripts": {
+    "setup": "node setup.js",
+    "produce": "node producer.js",
+    "monitor": "node monitor.js",
+    "inspect": "node inspect.js",
+    "probe": "node probe.js",
+    "migrate:timeseries": "node migrate-timeseries.js",
+    "rollup:4h": "node rollup-4h.js",
+    "rollup:4h:backfill": "node rollup-4h.js --backfill"
+  },
+  "dependencies": {
+    "mongodb": "^6.10.0"
+  }
+}
