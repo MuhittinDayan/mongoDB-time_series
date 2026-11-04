@@ -1,9 +1,9 @@
-// Tamamlanmış UTC 4 saatlik pencereleri ayrı, normal bir koleksiyonda özetler.
-// Varsayılan: son iki tamamlanmış pencere. --backfill: retention içinde kalan
-// bütün tam pencereler. Var olan özetler değiştirilmez.
+// Summarizes completed 4-hour UTC windows into a separate, regular collection.
+// Default: the last two completed windows. --backfill: all complete windows still
+// within retention. Existing summaries are never changed.
 import { MongoClient } from 'mongodb';
-import { MONGO_URI, DB_NAME, COLLECTION } from './env.js';
-import { RETENTION_GROUPS, companyIdsFor } from './config.js';
+import { MONGO_URI, DB_NAME, COLLECTION } from './lib/env.js';
+import { RETENTION_GROUPS, companyIdsFor } from './lib/config.js';
 
 const TARGET = 'metrics_rollup_4h';
 const WINDOW_MS = 4 * 3600 * 1000;
@@ -24,7 +24,7 @@ async function main() {
     const db = client.db(DB_NAME);
     const info = await db.listCollections({ name: COLLECTION }).next();
     if (info?.type !== 'timeseries') {
-      throw new Error(`${DB_NAME}.${COLLECTION} time-series koleksiyonu değil`);
+      throw new Error(`${DB_NAME}.${COLLECTION} is not a time-series collection`);
     }
 
     const raw = db.collection(COLLECTION);

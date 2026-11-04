@@ -1,6 +1,6 @@
-// Geçici demo scripti: ham dökümanları periyodik olarak tablo halinde basar.
+// Temporary demo script: periodically prints raw documents as a table.
 import { MongoClient } from 'mongodb';
-import { MONGO_URI, DB_NAME, COLLECTION } from './env.js';
+import { MONGO_URI, DB_NAME, COLLECTION } from './lib/env.js';
 
 const REFRESH_MS = 4000;
 
@@ -13,15 +13,15 @@ async function main() {
     const now = new Date();
     const docs = await collection.find({ retentionDemo: true, companyId: 1 }).sort({ ts: -1 }).limit(20).toArray();
 
-    console.log(`\n===== ${now.toLocaleTimeString()} | şirket 1 son ${docs.length} kayıt =====`);
+    console.log(`\n===== ${now.toLocaleTimeString()} | company 1, latest ${docs.length} records =====`);
     if (docs.length === 0) {
-      console.log('(koleksiyon boş)');
+      console.log('(collection is empty)');
     } else {
       console.table(
         docs.map((d) => ({
           companyId: d.companyId,
           ts: d.ts.toLocaleTimeString(),
-          kalanSn: d.expireAt ? Math.max(0, (d.expireAt.getTime() - now.getTime()) / 1000).toFixed(1) : '-',
+          remainingSec: d.expireAt ? Math.max(0, (d.expireAt.getTime() - now.getTime()) / 1000).toFixed(1) : '-',
           temperature: d.temperature,
           humidity: d.humidity,
         }))

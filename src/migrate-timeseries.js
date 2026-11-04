@@ -1,9 +1,9 @@
-// Durdurulmuş üreticinin verilerini yeni time-series koleksiyonuna taşır.
-// Kaynağa dokunmaz; hedef doluysa ikinci kez çalışmayı reddeder.
+// Moves the stopped producer's data into the new time-series collection.
+// It does not touch the source and refuses to run a second time if the target has data.
 import { MongoClient } from 'mongodb';
-import { MONGO_URI, DB_NAME, COLLECTION } from './env.js';
-import { COMPANIES } from './config.js';
-import { ensureTimeSeriesCollection, ensureRetentionIndexes } from './retention.js';
+import { MONGO_URI, DB_NAME, COLLECTION } from './lib/env.js';
+import { COMPANIES } from './lib/config.js';
+import { ensureTimeSeriesCollection, ensureRetentionIndexes } from './lib/retention.js';
 
 const SOURCE = 'metrics';
 const TARGET = COLLECTION;
@@ -17,13 +17,13 @@ async function main() {
     const source = db.collection(SOURCE);
     const target = db.collection(TARGET);
     const sourceInfo = await db.listCollections({ name: SOURCE }).next();
-    if (sourceInfo?.type !== 'collection') throw new Error(`${SOURCE} normal koleksiyon bulunamadı`);
+    if (sourceInfo?.type !== 'collection') throw new Error(`Regular collection ${SOURCE} not found`);
 
     await ensureTimeSeriesCollection(db, TARGET);
 
-    // Time-series'te estimatedDocumentCount ölçüm değil bucket sayar; tek kayıt yeterli.
+    // In time-series, estimatedDocumentCount counts buckets rather than measurements; one record is enough.
     if (await target.findOne({}, { projection: { _id: 1 } })) {
-      throw new Error(`${TARGET} dolu; tekrar aktarım çift kayda neden olur`);
+      throw new Error(`${TARGET} already has data; copying again would create duplicates`);
     }
 
     await ensureRetentionIndexes(target);

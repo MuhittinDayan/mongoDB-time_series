@@ -1,8 +1,8 @@
-// TTL, şirket bazlı yaş sınırları ve koleksiyon disk ölçülerini raporlar.
+// Reports TTL settings, per-company age limits and collection disk usage.
 
 import { MongoClient } from 'mongodb';
-import { MONGO_URI, DB_NAME, COLLECTION } from './env.js';
-import { COMPANIES, TTL_GRACE_SECONDS, retentionSecondsFor } from './config.js';
+import { MONGO_URI, DB_NAME, COLLECTION } from './lib/env.js';
+import { COMPANIES, TTL_GRACE_SECONDS, retentionSecondsFor } from './lib/config.js';
 
 async function main() {
   const client = new MongoClient(MONGO_URI);
@@ -11,16 +11,16 @@ async function main() {
   const collection = db.collection(COLLECTION);
   const collectionInfo = await db.listCollections({ name: COLLECTION }).next();
 
-  console.log(`Hedef: ${DB_NAME}.${COLLECTION}`);
-  console.log(`Tür: ${collectionInfo?.type ?? 'bulunamadı'}`);
-  console.log(`Genel TTL: ${collectionInfo?.options?.expireAfterSeconds ?? '-'} saniye`);
-  console.log('=== 1) Index listesi ===');
+  console.log(`Target: ${DB_NAME}.${COLLECTION}`);
+  console.log(`Type: ${collectionInfo?.type ?? 'not found'}`);
+  console.log(`General TTL: ${collectionInfo?.options?.expireAfterSeconds ?? '-'} seconds`);
+  console.log('=== 1) Index list ===');
   const indexes = await collection.indexes();
   for (const idx of indexes) {
     const isTtl = Object.prototype.hasOwnProperty.call(idx, 'expireAfterSeconds');
     console.log(
       `  ${idx.name}  key=${JSON.stringify(idx.key)}` +
-        (isTtl ? `  <-- partial TTL (expireAfterSeconds=${idx.expireAfterSeconds}, filtre=${JSON.stringify(idx.partialFilterExpression)})` : '')
+        (isTtl ? `  <-- partial TTL (expireAfterSeconds=${idx.expireAfterSeconds}, filter=${JSON.stringify(idx.partialFilterExpression)})` : '')
     );
   }
 
@@ -28,14 +28,14 @@ async function main() {
   try {
     const ttl = (await db.admin().serverStatus()).metrics.ttl;
     console.log(`  passes: ${ttl.passes}`);
-    console.log(`  deletedDocuments: ${ttl.deletedDocuments} (sunucu geneli)`);
+    console.log(`  deletedDocuments: ${ttl.deletedDocuments} (server-wide)`);
   } catch (err) {
-    console.warn(`  TTL sayacı okunamadı: ${err.message}`);
+    console.warn(`  Could not read the TTL counter: ${err.message}`);
   }
 
-  console.log('\n=== 3) Şirket bazlı yaş kontrolü ===');
-  console.log(`  TTL bucket'ları siler; süresi dolan kayıtların ${TTL_GRACE_SECONDS} sn ` +
-    'daha görünmesi normaldir. Yalnızca bu payı aşanlar SORUN sayılır.');
+  console.log('\n=== 3) Per-company age check ===');
+  console.log(`  TTL deletes buckets; expired records may normally stay visible for another ${TTL_GRACE_SECONDS} s. ` +
+    'Only records past this allowance count as a PROBLEM.');
   const now = new Date();
   const ageRows = [];
   for (const company of COMPANIES) {
@@ -45,7 +45,7 @@ async function main() {
       .limit(1)
       .toArray();
 
-    // TTL expireAt'e değil ts'e göre işler; sayımlar da ts üzerinden yapılır.
+    // TTL works from ts, not expireAt, so the counts also use ts.
     const retentionSec = retentionSecondsFor(company.id);
     const expiredBefore = new Date(now.getTime() - retentionSec * 1000);
     const overdueBefore = new Date(expiredBefore.getTime() - TTL_GRACE_SECONDS * 1000);
@@ -57,60 +57,60 @@ async function main() {
     });
     if (oldest.length === 0) {
       ageRows.push({
-        sirket: company.id,
-        retentionSn: retentionSec,
-        suresiGecmis: expired,
-        gecikmis: overdue,
-        enEskiYasSn: '-',
-        sinirAsimi: '-',
-        durum: 'veri yok',
+        company: company.id,
+        retentionSec,
+        expired,
+        overdue,
+        oldestAgeSec: '-',
+        overLimit: '-',
+        status: 'no data',
       });
       continue;
     }
 
     const ageSec = (now.getTime() - oldest[0].ts.getTime()) / 1000;
     ageRows.push({
-      sirket: company.id,
-      retentionSn: retentionSec,
-      suresiGecmis: expired,
-      gecikmis: overdue,
-      enEskiYasSn: ageSec.toFixed(1),
-      sinirAsimi: expired > 0 ? `+${(ageSec - retentionSec).toFixed(1)}sn` : 'hayır',
-      durum: overdue > 0 ? 'SORUN' : expired > 0 ? 'OK (bucket bekliyor)' : 'OK',
+      company: company.id,
+      retentionSec,
+      expired,
+      overdue,
+      oldestAgeSec: ageSec.toFixed(1),
+      overLimit: expired > 0 ? `+${(ageSec - retentionSec).toFixed(1)}s` : 'no',
+      status: overdue > 0 ? 'PROBLEM' : expired > 0 ? 'OK (bucket pending)' : 'OK',
     });
   }
   console.table(ageRows);
 
-  console.log('=== 4) Disk ölçüleri (koleksiyonun tamamı) ===');
+  console.log('=== 4) Disk usage (whole collection) ===');
   const [{ storageStats: disk }] = await collection.aggregate([
     { $collStats: { storageStats: { scale: 1 } } },
   ]).toArray();
   console.table([{
-    // Time-series'te storageStats.count ölçüm sayısı değildir; bucket sayısı gösterilir.
-    bucketSayisi: disk.timeseries?.bucketCount ?? disk.count,
-    timeSeriesBucketBayt: disk.size,
-    ayrilanVeriBayt: disk.storageSize,
-    yenidenKullanilabilirBayt: disk.freeStorageSize ?? 0,
-    indexBayt: disk.totalIndexSize,
-    toplamAyrilanBayt: disk.totalSize,
+    // In time-series, storageStats.count is not the measurement count; the bucket count is shown.
+    bucketCount: disk.timeseries?.bucketCount ?? disk.count,
+    timeSeriesBucketBytes: disk.size,
+    allocatedDataBytes: disk.storageSize,
+    reusableBytes: disk.freeStorageSize ?? 0,
+    indexBytes: disk.totalIndexSize,
+    totalAllocatedBytes: disk.totalSize,
   }]);
   try {
     const dbDisk = await db.command({ dbStats: 1, scale: 1 });
-    console.log(`MongoDB veri disk bölümü: kullanılan=${dbDisk.fsUsedSize ?? '-'} B, ` +
-      `kapasite=${dbDisk.fsTotalSize ?? '-'} B (tüm dosya sistemi)`);
+    console.log(`MongoDB data volume: used=${dbDisk.fsUsedSize ?? '-'} B, ` +
+      `capacity=${dbDisk.fsTotalSize ?? '-'} B (entire file system)`);
   } catch (err) {
-    console.warn(`Dosya sistemi ölçüsü okunamadı: ${err.message}`);
+    console.warn(`Could not read file system usage: ${err.message}`);
   }
 
-  console.log("=== 5) Örnek sorgu için explain('executionStats') ===");
+  console.log("=== 5) explain('executionStats') for a sample query ===");
   const sampleCompany = COMPANIES[0].id;
   const explainResult = await collection
     .find({ retentionDemo: true, companyId: sampleCompany })
     .sort({ ts: -1 })
     .explain('executionStats');
 
-  // Time-series find, bucket açma aşamasıyla yeniden yazılır; plan üst düzeyde
-  // (classic/SBE: winningPlan.queryPlan) ya da stages[].$cursor içinde gelebilir.
+  // A time-series find is rewritten with a bucket-unpacking stage; the plan can appear at the
+  // top level (classic/SBE: winningPlan.queryPlan) or inside stages[].$cursor.
   function findKey(node, key) {
     if (!node || typeof node !== 'object') return undefined;
     if (Object.prototype.hasOwnProperty.call(node, key)) return node[key];
@@ -136,17 +136,17 @@ async function main() {
   const usesIxscan = stages.includes('IXSCAN');
   const usesCollscan = stages.includes('COLLSCAN');
 
-  console.log(`  Sorgu: find({ retentionDemo: true, companyId: ${sampleCompany} }).sort({ ts: -1 })`);
-  console.log(`  Plan aşamaları: ${stages.join(' -> ')}`);
-  console.log(`  Tarama tipi: ${usesIxscan ? 'IXSCAN (index kullanıldı)' : usesCollscan ? 'COLLSCAN (index kullanılmadı!)' : 'bilinmiyor'}`);
+  console.log(`  Query: find({ retentionDemo: true, companyId: ${sampleCompany} }).sort({ ts: -1 })`);
+  console.log(`  Plan stages: ${stages.join(' -> ')}`);
+  console.log(`  Scan type: ${usesIxscan ? 'IXSCAN (index used)' : usesCollscan ? 'COLLSCAN (index not used!)' : 'unknown'}`);
   console.log(`  nReturned: ${execStats.nReturned}`);
-  console.log(`  totalDocsExamined: ${execStats.totalDocsExamined} (time-series'te bucket sayısı)`);
+  console.log(`  totalDocsExamined: ${execStats.totalDocsExamined} (bucket count in time-series)`);
   console.log(`  totalKeysExamined: ${execStats.totalKeysExamined}`);
 
   await client.close();
 }
 
 main().catch((err) => {
-  console.error('inspect.js hata:', err);
+  console.error('inspect.js error:', err);
   process.exit(1);
 });

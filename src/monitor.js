@@ -1,17 +1,17 @@
-// Dakikada bir şirket bazlı TTL ve disk anlık görüntüsü alır.
+// Takes a per-company TTL and disk snapshot once a minute.
 
 import { appendFile, stat } from 'node:fs/promises';
 import { MongoClient } from 'mongodb';
-import { MONGO_URI, DB_NAME, COLLECTION } from './env.js';
-import { COMPANIES, retentionSecondsFor } from './config.js';
+import { MONGO_URI, DB_NAME, COLLECTION } from './lib/env.js';
+import { COMPANIES, retentionSecondsFor } from './lib/config.js';
+import { OBSERVATIONS_CSV } from './lib/paths.js';
 
 const REFRESH_MS = 60000;
-const CSV_FILE = 'retention-observations.csv';
 const peakByCompany = new Map(COMPANIES.map((c) => [c.id, 0]));
 
 function formatAge(seconds) {
   if (seconds == null) return '-';
-  return `${seconds.toFixed(1)}sn`;
+  return `${seconds.toFixed(1)}s`;
 }
 
 async function tick(db, collection) {
@@ -41,12 +41,12 @@ async function tick(db, collection) {
     const dbDisk = await db.command({ dbStats: 1, scale: 1 });
     fsUsed = dbDisk.fsUsedSize ?? '';
     fsTotal = dbDisk.fsTotalSize ?? '';
-  } catch { /* Yetki yoksa koleksiyon ölçümleri devam eder. */ }
+  } catch { /* Without permission, collection metrics still continue. */ }
   let ttlDeleted = '';
   try { ttlDeleted = String((await db.admin().serverStatus()).metrics.ttl.deletedDocuments); }
-  catch { /* Yetki yoksa diğer ölçümler devam eder. */ }
+  catch { /* Without permission, the other metrics still continue. */ }
 
-  console.log(`Retention Monitor — ${now.toISOString()} (her ${REFRESH_MS / 1000}sn yenilenir)`);
+  console.log(`Retention Monitor — ${now.toISOString()} (refreshes every ${REFRESH_MS / 1000}s)`);
 
   const rows = COMPANIES.map((company) => {
     const s = statsById.get(company.id);
@@ -56,38 +56,38 @@ async function tick(db, collection) {
     peakByCompany.set(company.id, peak);
 
     let status;
-    if (count === 0) status = 'veri yok';
-    else if (count < peak) status = 'SİLME BAŞLADI';
-    else status = 'birikiyor';
+    if (count === 0) status = 'no data';
+    else if (count < peak) status = 'DELETION STARTED';
+    else status = 'accumulating';
 
     const oldestAgeSec = s ? (now.getTime() - s.oldest.getTime()) / 1000 : null;
 
     return {
-      sirket: company.id,
-      retentionSaat: retentionSecondsFor(company.id) / 3600,
-      kayit: count,
-      zirve: peak,
-      enEskiYas: formatAge(oldestAgeSec),
-      suresiGecmis: s?.expired ?? 0,
-      durum: status,
+      company: company.id,
+      retentionHours: retentionSecondsFor(company.id) / 3600,
+      count,
+      peak,
+      oldestAge: formatAge(oldestAgeSec),
+      expired: s?.expired ?? 0,
+      status,
     };
   });
 
   console.table(rows);
-  console.log(`Disk: time-series bucket verisi=${disk.size} B, ayrılan veri=${disk.storageSize} B, ` +
-    `yeniden kullanılabilir=${disk.freeStorageSize ?? 0} B, ` +
-    `index=${disk.totalIndexSize} B, toplam ayrılan=${disk.totalSize} B`);
-  console.log(`Dosya sistemi: kullanılan=${fsUsed || '-'} B, kapasite=${fsTotal || '-'} B`);
-  const lines = rows.map((row) => [now.toISOString(), DB_NAME, COLLECTION, row.sirket,
-    row.retentionSaat, row.kayit, row.suresiGecmis, row.enEskiYas,
+  console.log(`Disk: time-series bucket data=${disk.size} B, allocated data=${disk.storageSize} B, ` +
+    `reusable=${disk.freeStorageSize ?? 0} B, ` +
+    `index=${disk.totalIndexSize} B, total allocated=${disk.totalSize} B`);
+  console.log(`File system: used=${fsUsed || '-'} B, capacity=${fsTotal || '-'} B`);
+  const lines = rows.map((row) => [now.toISOString(), DB_NAME, COLLECTION, row.company,
+    row.retentionHours, row.count, row.expired, row.oldestAge,
     disk.size, disk.storageSize, disk.freeStorageSize ?? 0,
     disk.totalIndexSize, disk.totalSize, fsUsed, fsTotal, ttlDeleted].join(','));
-  await appendFile(CSV_FILE, `${lines.join('\n')}\n`);
+  await appendFile(OBSERVATIONS_CSV, `${lines.join('\n')}\n`);
 }
 
 async function main() {
-  try { await stat(CSV_FILE); }
-  catch { await appendFile(CSV_FILE, 'time,db,collection,company,retentionHours,count,expired,oldestAge,logicalBytes,storageBytes,reusableBytes,indexBytes,totalBytes,fsUsedBytes,fsTotalBytes,serverTtlDeleted\n'); }
+  try { await stat(OBSERVATIONS_CSV); }
+  catch { await appendFile(OBSERVATIONS_CSV, 'time,db,collection,company,retentionHours,count,expired,oldestAge,logicalBytes,storageBytes,reusableBytes,indexBytes,totalBytes,fsUsedBytes,fsTotalBytes,serverTtlDeleted\n'); }
   const client = new MongoClient(MONGO_URI);
   await client.connect();
   const db = client.db(DB_NAME);
@@ -98,7 +98,7 @@ async function main() {
     if (busy) return;
     busy = true;
     try { await tick(db, collection); }
-    catch (err) { console.error('monitor tick hata:', err.message); }
+    catch (err) { console.error('monitor tick error:', err.message); }
     finally { busy = false; }
   };
   run();
@@ -112,6 +112,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('monitor.js hata:', err);
+  console.error('monitor.js error:', err);
   process.exit(1);
 });

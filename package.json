@@ -3,16 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Şirket bazlı partial TTL kullanan MongoDB time-series retention deneyi",
+  "description": "MongoDB time-series retention experiment using per-company partial TTL",
   "scripts": {
-    "setup": "node setup.js",
-    "produce": "node producer.js",
-    "monitor": "node monitor.js",
-    "inspect": "node inspect.js",
-    "probe": "node probe.js",
-    "migrate:timeseries": "node migrate-timeseries.js",
-    "rollup:4h": "node rollup-4h.js",
-    "rollup:4h:backfill": "node rollup-4h.js --backfill"
+    "setup": "node src/setup.js",
+    "produce": "node src/producer.js",
+    "monitor": "node src/monitor.js",
+    "inspect": "node src/inspect.js",
+    "watch": "node src/watch.js",
+    "probe": "node src/probe.js",
+    "migrate:timeseries": "node src/migrate-timeseries.js",
+    "rollup:4h": "node src/rollup-4h.js",
+    "rollup:4h:backfill": "node src/rollup-4h.js --backfill"
   },
   "dependencies": {
     "mongodb": "^6.10.0"
