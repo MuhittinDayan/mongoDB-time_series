@@ -2,10 +2,7 @@ node_modules/
 
 .env
 .claude
-docs/
+logs/
 
 healthcheck.cmd
 rollup-4h.cmd
-
-logs/producer-live.pid
-logs/producer-recovered.log
